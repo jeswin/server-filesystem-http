@@ -37,7 +37,7 @@ All filesystem functionality from the original is preserved.
 ## Installation
 
 ```bash
-npm install -g server-filesystem-http
+npm install -g mcpfs
 ```
 
 Or for local development:
@@ -52,13 +52,13 @@ npm run build
 
 ```bash
 # Initialize credentials (creates .env with random values)
-npx server-filesystem-http --init
+mcpfs --init
 
 # Start the server with current directory (if safe)
-npx server-filesystem-http
+mcpfs
 
 # Or specify directories explicitly
-npx server-filesystem-http /path/to/dir1 /path/to/dir2
+mcpfs /path/to/dir1 /path/to/dir2
 ```
 
 The `--init` command generates random `CLIENT_ID` and `CLIENT_SECRET` values and saves them to a `.env` file. The credentials are printed to the console so you can use them in your client.
@@ -92,10 +92,10 @@ Would you like to create .env with random credentials? (y/n):
 You can also provide credentials via environment variables:
 
 ```bash
-CLIENT_ID=myid CLIENT_SECRET=mysecret npx server-filesystem-http /path/to/dir
+CLIENT_ID=myid CLIENT_SECRET=mysecret mcpfs /path/to/dir
 
 # With custom port
-PORT=8080 CLIENT_ID=myid CLIENT_SECRET=mysecret npx server-filesystem-http /path/to/dir
+PORT=8080 CLIENT_ID=myid CLIENT_SECRET=mysecret mcpfs /path/to/dir
 ```
 
 | Variable | Required | Default | Description |

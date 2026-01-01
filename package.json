@@ -1,6 +1,6 @@
 {
-  "name": "server-filesystem-http",
-  "version": "0.1.2",
+  "name": "mcpfs",
+  "version": "0.1.0",
   "description": "MCP filesystem server with HTTP streaming transport",
   "license": "MIT",
   "author": "jeswin",
@@ -10,7 +10,7 @@
   },
   "type": "module",
   "bin": {
-    "mcp-server-filesystem-http": "dist/index.js"
+    "mcpfs": "dist/index.js"
   },
   "main": "dist/index.js",
   "files": [

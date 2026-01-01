@@ -251,7 +251,7 @@ if (args.length === 0) {
     console.error("No directories specified and current directory is unsafe to serve.");
     console.error(`Current directory: ${cwd}`);
     console.error("");
-    console.error("Usage: npx server-filesystem-http [allowed-directory] [additional-directories...]");
+    console.error("Usage: mcpfs [allowed-directory] [additional-directories...]");
     console.error("");
     console.error("For safety, the server won't automatically serve:");
     console.error("  - Root directory (/)");
