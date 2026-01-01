@@ -54,11 +54,23 @@ npm run build
 # Initialize credentials (creates .env with random values)
 npx server-filesystem-http --init
 
-# Start the server
-npx server-filesystem-http /path/to/allowed/dir
+# Start the server with current directory (if safe)
+npx server-filesystem-http
+
+# Or specify directories explicitly
+npx server-filesystem-http /path/to/dir1 /path/to/dir2
 ```
 
 The `--init` command generates random `CLIENT_ID` and `CLIENT_SECRET` values and saves them to a `.env` file. The credentials are printed to the console so you can use them in your client.
+
+### Default Directory Behavior
+
+When no directories are specified, the server will serve the **current working directory** if it's considered safe. The server will refuse to auto-serve:
+- Root directory (`/`)
+- Home directory (`~`)
+- System directories (`/usr`, `/etc`, `/var`, `/System`, etc.)
+
+To serve these directories, you must specify them explicitly as command-line arguments.
 
 ### Command Line Options
 

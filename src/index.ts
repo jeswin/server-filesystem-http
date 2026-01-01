@@ -213,14 +213,57 @@ function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
-// Command line argument parsing
-const args = process.argv.slice(2);
+// Check if a path is unsafe to serve (root, home directory, or system paths)
+function isUnsafePath(dirPath: string): boolean {
+  const normalized = path.resolve(dirPath);
+
+  // Root directory
+  if (normalized === '/') return true;
+
+  // Home directory (Linux/Mac)
+  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+  if (homeDir && normalized === path.resolve(homeDir)) return true;
+
+  // System directories (Linux/Mac)
+  const unsafePaths = [
+    '/bin', '/sbin', '/usr', '/etc', '/var', '/lib', '/lib64',
+    '/boot', '/dev', '/proc', '/sys', '/root',
+    // Mac specific
+    '/System', '/Library', '/Applications', '/Users',
+    // Windows
+    'C:\\', 'C:\\Windows', 'C:\\Program Files', 'C:\\Program Files (x86)',
+  ];
+
+  for (const unsafe of unsafePaths) {
+    if (normalized === path.resolve(unsafe)) return true;
+  }
+
+  return false;
+}
+
+// Command line argument parsing - filter out flags
+const args = process.argv.slice(2).filter(arg => !arg.startsWith('--'));
+
+// If no directories provided, try to use current directory if safe
 if (args.length === 0) {
-  console.error("Usage: mcp-server-filesystem [allowed-directory] [additional-directories...]");
-  console.error("Note: Allowed directories can be provided via:");
-  console.error("  1. Command-line arguments (shown above)");
-  console.error("  2. MCP roots protocol (if client supports it)");
-  console.error("At least one directory must be provided by EITHER method for the server to operate.");
+  const cwd = process.cwd();
+  if (isUnsafePath(cwd)) {
+    console.error("No directories specified and current directory is unsafe to serve.");
+    console.error(`Current directory: ${cwd}`);
+    console.error("");
+    console.error("Usage: npx server-filesystem-http [allowed-directory] [additional-directories...]");
+    console.error("");
+    console.error("For safety, the server won't automatically serve:");
+    console.error("  - Root directory (/)");
+    console.error("  - Home directory (~)");
+    console.error("  - System directories (/usr, /etc, /var, etc.)");
+    console.error("");
+    console.error("Please specify allowed directories explicitly, or run from a project directory.");
+    process.exit(1);
+  } else {
+    args.push(cwd);
+    console.error(`No directories specified. Serving current directory: ${cwd}`);
+  }
 }
 
 // Store allowed directories in normalized and resolved form
