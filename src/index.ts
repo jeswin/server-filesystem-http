@@ -180,6 +180,19 @@ type AuthorizationCode = {
 };
 const authorizationCodes: Map<string, AuthorizationCode> = new Map();
 
+// Pending authorization requests - CSRF protection
+// Only requests that were shown the consent screen can be approved
+type PendingAuthorization = {
+  clientId: string;
+  redirectUri: string;
+  state: string | undefined;
+  codeChallenge: string;
+  codeChallengeMethod: string;
+  expiresAt: number;
+};
+const pendingAuthorizations: Map<string, PendingAuthorization> = new Map();
+const PENDING_AUTH_EXPIRATION_MS = 10 * 60 * 1000; // 10 minutes
+
 // Dynamic client registration storage
 type RegisteredClient = {
   clientId: string;
@@ -191,17 +204,13 @@ type RegisteredClient = {
 const registeredClients: Map<string, RegisteredClient> = new Map();
 
 // Pre-register the static client from environment variables
+// This is for machine-to-machine access (client_credentials flow) and local testing
+// ChatGPT and other MCP clients use dynamic registration and provide their own redirect URIs
 if (CLIENT_ID) {
   registeredClients.set(CLIENT_ID, {
     clientId: CLIENT_ID,
     clientSecret: CLIENT_SECRET,
-    redirectUris: [
-      "https://chatgpt.com/aip/g/g-*/oauth/callback",
-      "https://chatgpt.com/connector_platform_oauth_redirect",
-      "https://chat.openai.com/connector_platform_oauth_redirect",
-      "http://localhost:3000/callback",
-      "http://127.0.0.1:3000/callback",
-    ],
+    redirectUris: ["http://localhost:3000/callback", "http://127.0.0.1:3000/callback"],
     clientName: "Static Admin Client",
     createdAt: Date.now(),
   });
@@ -1208,6 +1217,17 @@ app.get("/authorize", (req: Request, res: Response) => {
     return;
   }
 
+  // Generate CSRF token and store pending authorization
+  const csrfToken = randomBytes(32).toString("hex");
+  pendingAuthorizations.set(csrfToken, {
+    clientId: client_id,
+    redirectUri: redirect_uri,
+    state: state || undefined,
+    codeChallenge: code_challenge,
+    codeChallengeMethod: code_challenge_method,
+    expiresAt: Date.now() + PENDING_AUTH_EXPIRATION_MS,
+  });
+
   // Show consent screen
   const clientName = client.clientName || client_id;
   const html = `
@@ -1340,11 +1360,7 @@ app.get("/authorize", (req: Request, res: Response) => {
     </div>
 
     <form method="POST" action="/authorize" style="margin-top: 24px;">
-      <input type="hidden" name="client_id" value="${client_id}">
-      <input type="hidden" name="redirect_uri" value="${redirect_uri}">
-      <input type="hidden" name="state" value="${state || ""}">
-      <input type="hidden" name="code_challenge" value="${code_challenge}">
-      <input type="hidden" name="code_challenge_method" value="${code_challenge_method}">
+      <input type="hidden" name="csrf_token" value="${csrfToken}">
       <div class="buttons">
         <button type="submit" name="action" value="deny" class="deny">Deny</button>
         <button type="submit" name="action" value="allow" class="allow">Allow</button>
@@ -1359,17 +1375,37 @@ app.get("/authorize", (req: Request, res: Response) => {
 
 // Handle authorization form submission
 app.post("/authorize", express.urlencoded({ extended: true }), (req: Request, res: Response) => {
-  const { client_id, redirect_uri, state, code_challenge, code_challenge_method, action } =
-    req.body;
+  const { csrf_token, action } = req.body;
+
+  // Verify CSRF token - this proves the user saw our consent screen
+  if (!csrf_token || typeof csrf_token !== "string") {
+    res.status(400).send("Invalid request: missing CSRF token");
+    return;
+  }
+
+  const pendingAuth = pendingAuthorizations.get(csrf_token);
+  if (!pendingAuth) {
+    res.status(400).send("Invalid or expired authorization request. Please try again.");
+    return;
+  }
+
+  // Delete the pending auth immediately (one-time use)
+  pendingAuthorizations.delete(csrf_token);
+
+  // Check expiration
+  if (Date.now() > pendingAuth.expiresAt) {
+    res.status(400).send("Authorization request expired. Please try again.");
+    return;
+  }
 
   // Build redirect URL
-  const redirectUrl = new URL(redirect_uri);
+  const redirectUrl = new URL(pendingAuth.redirectUri);
 
   if (action !== "allow") {
     // User denied access
     redirectUrl.searchParams.set("error", "access_denied");
     redirectUrl.searchParams.set("error_description", "User denied the authorization request");
-    if (state) redirectUrl.searchParams.set("state", state);
+    if (pendingAuth.state) redirectUrl.searchParams.set("state", pendingAuth.state);
     res.redirect(redirectUrl.toString());
     return;
   }
@@ -1378,19 +1414,21 @@ app.post("/authorize", express.urlencoded({ extended: true }), (req: Request, re
   const code = randomBytes(32).toString("hex");
 
   authorizationCodes.set(code, {
-    clientId: client_id,
-    redirectUri: redirect_uri,
-    codeChallenge: code_challenge,
-    codeChallengeMethod: code_challenge_method,
+    clientId: pendingAuth.clientId,
+    redirectUri: pendingAuth.redirectUri,
+    codeChallenge: pendingAuth.codeChallenge,
+    codeChallengeMethod: pendingAuth.codeChallengeMethod,
     expiresAt: Date.now() + AUTH_CODE_EXPIRATION_MS,
   });
 
-  logger.info(`Authorization code issued for client: ${client_id}`);
+  logger.info(`Authorization code issued for client: ${pendingAuth.clientId}`);
 
   redirectUrl.searchParams.set("code", code);
-  if (state) redirectUrl.searchParams.set("state", state);
+  if (pendingAuth.state) redirectUrl.searchParams.set("state", pendingAuth.state);
 
-  res.redirect(redirectUrl.toString());
+  const redirectTarget = redirectUrl.toString();
+  logger.debug(`Redirecting to: ${redirectTarget}`);
+  res.redirect(redirectTarget);
 });
 
 // Token Endpoint - Supports authorization_code, refresh_token, and client_credentials
@@ -1399,6 +1437,7 @@ app.post(
   express.json(),
   express.urlencoded({ extended: true }),
   (req: Request, res: Response) => {
+    logger.debug(`Token request received: ${JSON.stringify(req.body)}`);
     const grantType = req.body.grant_type;
     const clientId = req.body.client_id;
     const clientSecret = req.body.client_secret;
@@ -1410,6 +1449,7 @@ app.post(
       const redirectUri = req.body.redirect_uri;
 
       if (!code || !codeVerifier) {
+        logger.debug(`Token error: Missing code or code_verifier`);
         res.status(400).json({
           error: "invalid_request",
           error_description: "Missing code or code_verifier",
@@ -1419,6 +1459,7 @@ app.post(
 
       const authCode = authorizationCodes.get(code);
       if (!authCode) {
+        logger.debug(`Token error: Invalid or expired authorization code`);
         res.status(400).json({
           error: "invalid_grant",
           error_description: "Invalid or expired authorization code",
@@ -1429,6 +1470,7 @@ app.post(
       // Verify code hasn't expired
       if (Date.now() > authCode.expiresAt) {
         authorizationCodes.delete(code);
+        logger.debug(`Token error: Authorization code has expired`);
         res.status(400).json({
           error: "invalid_grant",
           error_description: "Authorization code has expired",
@@ -1436,8 +1478,12 @@ app.post(
         return;
       }
 
-      // Verify client_id matches
-      if (authCode.clientId !== clientId) {
+      // Verify client_id matches (if provided)
+      // OAuth 2.1 allows client_id to be omitted if the code is already bound to the client
+      if (clientId && authCode.clientId !== clientId) {
+        logger.debug(
+          `Token error: Client ID mismatch - expected ${authCode.clientId}, got ${clientId}`
+        );
         res.status(400).json({
           error: "invalid_grant",
           error_description: "Client ID mismatch",
@@ -1447,6 +1493,9 @@ app.post(
 
       // Verify redirect_uri matches
       if (authCode.redirectUri !== redirectUri) {
+        logger.debug(
+          `Token error: Redirect URI mismatch - expected ${authCode.redirectUri}, got ${redirectUri}`
+        );
         res.status(400).json({
           error: "invalid_grant",
           error_description: "Redirect URI mismatch",
@@ -1458,6 +1507,7 @@ app.post(
       if (
         !verifyCodeChallenge(codeVerifier, authCode.codeChallenge, authCode.codeChallengeMethod)
       ) {
+        logger.debug(`Token error: Invalid code_verifier`);
         res.status(400).json({
           error: "invalid_grant",
           error_description: "Invalid code_verifier",
@@ -1472,17 +1522,18 @@ app.post(
       const accessToken = generateAccessToken();
       const refreshToken = generateRefreshToken();
       const expiresIn = TOKEN_EXPIRATION_MS / 1000;
+      const effectiveClientId = clientId || authCode.clientId;
 
       accessTokens.set(accessToken, {
         expiresAt: Date.now() + TOKEN_EXPIRATION_MS,
       });
 
       refreshTokens.set(refreshToken, {
-        clientId,
+        clientId: effectiveClientId,
         expiresAt: Date.now() + REFRESH_TOKEN_EXPIRATION_MS,
       });
 
-      logger.info(`Access token issued for client: ${clientId} (authorization_code)`);
+      logger.info(`Access token issued for client: ${effectiveClientId} (authorization_code)`);
 
       res.json({
         access_token: accessToken,
