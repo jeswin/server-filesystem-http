@@ -1,0 +1,30 @@
+# Source files (only publish dist/)
+src/
+tsconfig.json
+
+# Development files
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Tests
+__tests__/
+*.test.ts
+*.spec.ts
+coverage/
+
+# npm pack output
+*.tgz

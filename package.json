@@ -1,0 +1,43 @@
+{
+  "name": "server-filesystem-http",
+  "version": "0.1.0",
+  "description": "MCP filesystem server with HTTP streaming transport",
+  "license": "MIT",
+  "author": "jeswin",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jeswin/server-filesystem-http.git"
+  },
+  "type": "module",
+  "bin": {
+    "mcp-server-filesystem-http": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc && shx chmod +x dist/*.js",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch",
+    "prepare": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.24.0",
+    "cors": "^2.8.5",
+    "diff": "^8.0.2",
+    "express": "^5.2.1",
+    "glob": "^11.0.0",
+    "minimatch": "^10.0.1",
+    "zod-to-json-schema": "^3.24.5"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/diff": "^7.0.2",
+    "@types/express": "^5.0.6",
+    "@types/minimatch": "^5.1.2",
+    "@types/node": "^22",
+    "shx": "^0.4.0",
+    "typescript": "^5.8.2"
+  }
+}
