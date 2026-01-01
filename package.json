@@ -20,6 +20,10 @@
     "build": "tsc && shx chmod +x dist/*.js",
     "start": "node dist/index.js",
     "dev": "tsc --watch",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write \"src/**/*.ts\" \"*.json\" \"*.js\" \"*.md\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"*.json\" \"*.js\" \"*.md\"",
     "prepare": "npm run build"
   },
   "dependencies": {
@@ -32,12 +36,16 @@
     "zod-to-json-schema": "^3.24.5"
   },
   "devDependencies": {
+    "@eslint/js": "^9.18.0",
     "@types/cors": "^2.8.17",
     "@types/diff": "^7.0.2",
     "@types/express": "^5.0.6",
     "@types/minimatch": "^5.1.2",
     "@types/node": "^22",
+    "globals": "^15.14.0",
+    "prettier": "^3.4.2",
     "shx": "^0.4.0",
-    "typescript": "^5.8.2"
+    "typescript": "^5.8.2",
+    "typescript-eslint": "^8.20.0"
   }
 }
