@@ -37,24 +37,14 @@ All filesystem functionality from the original is preserved.
 ## Installation
 
 ```bash
+npm install -g server-filesystem-http
+```
+
+Or for local development:
+```bash
 npm install
 npm run build
 ```
-
-## Configuration
-
-Copy `.env.example` to `.env` and configure:
-
-```bash
-cp .env.example .env
-```
-
-Required environment variables:
-- `CLIENT_ID` - OAuth client ID for authentication
-- `CLIENT_SECRET` - OAuth client secret for authentication
-- `PORT` - Server port (optional, default: 24024)
-
-The server will refuse to start without `CLIENT_ID` and `CLIENT_SECRET`.
 
 ## Usage
 
@@ -62,23 +52,45 @@ The server will refuse to start without `CLIENT_ID` and `CLIENT_SECRET`.
 
 ```bash
 # Initialize credentials (creates .env with random values)
-node dist/index.js --init
+npx server-filesystem-http --init
 
 # Start the server
-node dist/index.js /path/to/allowed/dir
+npx server-filesystem-http /path/to/allowed/dir
 ```
 
-If credentials are missing, the server will prompt to create them interactively.
+The `--init` command generates random `CLIENT_ID` and `CLIENT_SECRET` values and saves them to a `.env` file. The credentials are printed to the console so you can use them in your client.
 
-### With Environment Variables
+### Command Line Options
+
+| Option | Description |
+|--------|-------------|
+| `--init` | Generate random credentials and save to `.env` |
+| `--force` | Used with `--init` to overwrite existing `.env` |
+
+### Interactive Mode
+
+If credentials are missing and you're running in an interactive terminal, the server will prompt:
+
+```
+Would you like to create .env with random credentials? (y/n):
+```
+
+### Environment Variables
+
+You can also provide credentials via environment variables:
 
 ```bash
-# Start with explicit credentials
-CLIENT_ID=myid CLIENT_SECRET=mysecret node dist/index.js /path/to/dir1 /path/to/dir2
+CLIENT_ID=myid CLIENT_SECRET=mysecret npx server-filesystem-http /path/to/dir
 
-# Or with custom port
-PORT=8080 CLIENT_ID=myid CLIENT_SECRET=mysecret node dist/index.js /path/to/allowed/dir
+# With custom port
+PORT=8080 CLIENT_ID=myid CLIENT_SECRET=mysecret npx server-filesystem-http /path/to/dir
 ```
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `CLIENT_ID` | Yes | - | OAuth client ID |
+| `CLIENT_SECRET` | Yes | - | OAuth client secret |
+| `PORT` | No | 24024 | Server port |
 
 The server exposes endpoints at `http://localhost:24024/`.
 
@@ -301,9 +313,9 @@ The mapping for filesystem tools is:
 
 ## Security
 
+- **OAuth 2.0 authentication** - All MCP endpoints require a valid Bearer token
 - Only directories specified at startup (or via MCP Roots) are accessible
-- No authentication by default - add a reverse proxy for production use
-- CORS is permissive (`*`) - restrict in production
+- CORS is permissive (`*`) - restrict in production via reverse proxy
 
 ## License
 
