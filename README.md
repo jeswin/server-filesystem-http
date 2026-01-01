@@ -33,6 +33,8 @@ All filesystem functionality from the original is preserved.
 - Search files
 - Get file metadata
 - Dynamic directory access control via [Roots](https://modelcontextprotocol.io/docs/learn/client-concepts#roots)
+- **OAuth 2.1 authentication** with PKCE support
+- **ChatGPT integration** via MCP connectors
 
 ## Installation
 
@@ -41,31 +43,85 @@ npm install -g mcpfs
 ```
 
 Or for local development:
+
 ```bash
 npm install
 npm run build
 ```
 
-## Usage
-
-### Quick Start
+## Quick Start
 
 ```bash
 # Initialize credentials (creates .env with random values)
 mcpfs --init
 
-# Start the server with current directory (if safe)
-mcpfs
-
-# Or specify directories explicitly
-mcpfs /path/to/dir1 /path/to/dir2
+# Start the server
+mcpfs /path/to/your/project
 ```
 
-The `--init` command generates random `CLIENT_ID` and `CLIENT_SECRET` values and saves them to a `.env` file. The credentials are printed to the console so you can use them in your client.
+## Using with ChatGPT
+
+ChatGPT requires a publicly accessible HTTPS URL. Use Cloudflare Tunnel (free) to expose your local server:
+
+### Step 1: Install Cloudflare Tunnel
+
+```bash
+# Linux
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+chmod +x cloudflared
+sudo mv cloudflared /usr/local/bin/
+
+# Mac
+brew install cloudflared
+
+# Windows - download from:
+# https://github.com/cloudflare/cloudflared/releases
+```
+
+### Step 2: Start mcpfs
+
+```bash
+mcpfs --init  # First time only - creates credentials
+mcpfs /path/to/your/project
+```
+
+### Step 3: Start the Tunnel
+
+In a separate terminal:
+
+```bash
+cloudflared tunnel --url http://localhost:24024
+```
+
+You'll get a URL like `https://random-words.trycloudflare.com`
+
+### Step 4: Connect in ChatGPT
+
+1. Go to **ChatGPT → Settings → Connectors → Create**
+2. **Name**: `mcpfs` (or any name you prefer)
+3. **URL**: `https://random-words.trycloudflare.com/mcp` (use your tunnel URL + `/mcp`)
+4. **Authentication**: OAuth
+5. **Client ID**: Copy from your `.env` file
+6. **Client Secret**: Copy from your `.env` file
+7. Click **Create**
+
+ChatGPT will redirect you to authorize. Once complete, you can use filesystem tools in ChatGPT!
+
+### Note on Tunnel URLs
+
+Quick tunnels generate a new URL each time. For a permanent URL:
+
+- Create a free Cloudflare account
+- Set up a named tunnel with your own domain
+
+---
+
+## Usage
 
 ### Default Directory Behavior
 
 When no directories are specified, the server will serve the **current working directory** if it's considered safe. The server will refuse to auto-serve:
+
 - Root directory (`/`)
 - Home directory (`~`)
 - System directories (`/usr`, `/etc`, `/var`, `/System`, etc.)
@@ -74,22 +130,12 @@ To serve these directories, you must specify them explicitly as command-line arg
 
 ### Command Line Options
 
-| Option | Description |
-|--------|-------------|
-| `--init` | Generate random credentials and save to `.env` |
+| Option    | Description                                     |
+| --------- | ----------------------------------------------- |
+| `--init`  | Generate random credentials and save to `.env`  |
 | `--force` | Used with `--init` to overwrite existing `.env` |
 
-### Interactive Mode
-
-If credentials are missing and you're running in an interactive terminal, the server will prompt:
-
-```
-Would you like to create .env with random credentials? (y/n):
-```
-
 ### Environment Variables
-
-You can also provide credentials via environment variables:
 
 ```bash
 CLIENT_ID=myid CLIENT_SECRET=mysecret mcpfs /path/to/dir
@@ -98,36 +144,68 @@ CLIENT_ID=myid CLIENT_SECRET=mysecret mcpfs /path/to/dir
 PORT=8080 CLIENT_ID=myid CLIENT_SECRET=mysecret mcpfs /path/to/dir
 ```
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `CLIENT_ID` | Yes | - | OAuth client ID |
-| `CLIENT_SECRET` | Yes | - | OAuth client secret |
-| `PORT` | No | 24024 | Server port |
+| Variable        | Required | Default | Description         |
+| --------------- | -------- | ------- | ------------------- |
+| `CLIENT_ID`     | Yes      | -       | OAuth client ID     |
+| `CLIENT_SECRET` | Yes      | -       | OAuth client secret |
+| `PORT`          | No       | 24024   | Server port         |
 
-The server exposes endpoints at `http://localhost:24024/`.
+---
 
-### HTTP Endpoints
+## HTTP Endpoints
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/token` | No | OAuth token endpoint (client credentials grant) |
-| POST | `/mcp` | Bearer | Send MCP messages (initialize, tool calls, etc.) |
-| GET | `/mcp` | Bearer | SSE stream for server-to-client notifications |
-| DELETE | `/mcp` | Bearer | Terminate session |
+### OAuth 2.1 Discovery (RFC 9728, RFC 8414)
+
+| Method | Path                                      | Description                   |
+| ------ | ----------------------------------------- | ----------------------------- |
+| GET    | `/.well-known/oauth-protected-resource`   | Protected resource metadata   |
+| GET    | `/.well-known/oauth-authorization-server` | Authorization server metadata |
+
+### OAuth 2.1 Endpoints
+
+| Method | Path         | Description                            |
+| ------ | ------------ | -------------------------------------- |
+| POST   | `/register`  | Dynamic client registration (RFC 7591) |
+| GET    | `/authorize` | Authorization endpoint with PKCE       |
+| POST   | `/token`     | Token endpoint                         |
+
+### MCP Endpoints
+
+| Method | Path   | Auth   | Description                                      |
+| ------ | ------ | ------ | ------------------------------------------------ |
+| POST   | `/mcp` | Bearer | Send MCP messages (initialize, tool calls, etc.) |
+| GET    | `/mcp` | Bearer | SSE stream for server-to-client notifications    |
+| DELETE | `/mcp` | Bearer | Terminate session                                |
+
+---
 
 ## Authentication
 
-This server uses OAuth 2.0 Client Credentials flow.
+This server supports OAuth 2.1 with multiple authentication flows:
 
-### Step 1: Get Access Token
+### Authorization Code Flow with PKCE (Recommended)
+
+Used by ChatGPT and other MCP clients. The flow is:
+
+1. Client discovers OAuth endpoints via `/.well-known/oauth-authorization-server`
+2. Client registers dynamically via `/register` (or uses static credentials)
+3. Client redirects to `/authorize` with PKCE challenge
+4. Server redirects back with authorization code
+5. Client exchanges code for tokens at `/token`
+
+### Client Credentials Flow (Machine-to-Machine)
+
+For direct API access without user interaction:
 
 ```bash
 curl -X POST http://localhost:24024/token \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "grant_type=client_credentials&client_id=YOUR_CLIENT_ID&client_secret=YOUR_CLIENT_SECRET"
+  -d "grant_type=client_credentials" \
+  -d "client_id=YOUR_CLIENT_ID" \
+  -d "client_secret=YOUR_CLIENT_SECRET"
 ```
 
 Response:
+
 ```json
 {
   "access_token": "abc123...",
@@ -136,10 +214,9 @@ Response:
 }
 ```
 
-### Step 2: Use Token for MCP Requests
+### Using the Token
 
 ```bash
-# Initialize session
 curl -X POST http://localhost:24024/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
@@ -154,34 +231,33 @@ curl -X POST http://localhost:24024/mcp \
       "clientInfo": { "name": "my-client", "version": "1.0.0" }
     }
   }'
-
-# Use the mcp-session-id header from the response for subsequent requests
 ```
+
+---
 
 ## Directory Access Control
 
-The server uses a flexible directory access control system. Directories can be specified via command-line arguments or dynamically via [Roots](https://modelcontextprotocol.io/docs/learn/client-concepts#roots).
+The server uses a flexible directory access control system.
 
 ### Method 1: Command-line Arguments
-Specify allowed directories when starting the server:
+
 ```bash
-node dist/index.js /path/to/dir1 /path/to/dir2
+mcpfs /path/to/dir1 /path/to/dir2
 ```
 
 ### Method 2: MCP Roots (Recommended)
+
 MCP clients that support [Roots](https://modelcontextprotocol.io/docs/learn/client-concepts#roots) can dynamically update the allowed directories.
-
-Roots notified by Client to Server completely replace any server-side allowed directories when provided.
-
-**Important**: If server starts without command-line arguments AND client doesn't support roots protocol (or provides empty roots), the server will throw an error during initialization.
 
 ### How It Works
 
-1. **Server Startup** - Server starts with directories from command-line arguments (if provided)
-2. **Client Connection** - Client connects and sends `initialize` request with capabilities
-3. **Roots Protocol** - If client supports roots, server requests and uses client's roots
-4. **Fallback** - If client doesn't support roots, server uses command-line directories only
+1. **Server Startup** - Server starts with directories from command-line arguments
+2. **Client Connection** - Client connects and sends `initialize` request
+3. **Roots Protocol** - If client supports roots, server uses client's roots
+4. **Fallback** - If client doesn't support roots, server uses command-line directories
 5. **Access Control** - All filesystem operations are restricted to allowed directories
+
+---
 
 ## API
 
@@ -193,145 +269,86 @@ Roots notified by Client to Server completely replace any server-side allowed di
     - `path` (string)
     - `head` (number, optional): First N lines
     - `tail` (number, optional): Last N lines
-  - Always treats the file as UTF-8 text regardless of extension
-  - Cannot specify both `head` and `tail` simultaneously
 
 - **read_media_file**
-  - Read an image or audio file
-  - Inputs:
-    - `path` (string)
-  - Streams the file and returns base64 data with the corresponding MIME type
+  - Read an image or audio file as base64
+  - Input: `path` (string)
 
 - **read_multiple_files**
   - Read multiple files simultaneously
   - Input: `paths` (string[])
-  - Failed reads won't stop the entire operation
 
 - **write_file**
-  - Create new file or overwrite existing (exercise caution with this)
-  - Inputs:
-    - `path` (string): File location
-    - `content` (string): File content
+  - Create new file or overwrite existing
+  - Inputs: `path` (string), `content` (string)
 
 - **edit_file**
-  - Make selective edits using advanced pattern matching and formatting
-  - Features:
-    - Line-based and multi-line content matching
-    - Whitespace normalization with indentation preservation
-    - Multiple simultaneous edits with correct positioning
-    - Indentation style detection and preservation
-    - Git-style diff output with context
-    - Preview changes with dry run mode
-  - Inputs:
-    - `path` (string): File to edit
-    - `edits` (array): List of edit operations
-      - `oldText` (string): Text to search for (can be substring)
-      - `newText` (string): Text to replace with
-    - `dryRun` (boolean): Preview changes without applying (default: false)
-  - Returns detailed diff and match information for dry runs, otherwise applies changes
-  - Best Practice: Always use dryRun first to preview changes before applying them
+  - Make selective edits with pattern matching
+  - Inputs: `path`, `edits` (array of oldText/newText), `dryRun` (boolean)
 
 - **create_directory**
   - Create new directory or ensure it exists
   - Input: `path` (string)
-  - Creates parent directories if needed
-  - Succeeds silently if directory exists
 
 - **list_directory**
   - List directory contents with [FILE] or [DIR] prefixes
   - Input: `path` (string)
 
 - **list_directory_with_sizes**
-  - List directory contents with [FILE] or [DIR] prefixes, including file sizes
-  - Inputs:
-    - `path` (string): Directory path to list
-    - `sortBy` (string, optional): Sort entries by "name" or "size" (default: "name")
-  - Returns detailed listing with file sizes and summary statistics
-  - Shows total files, directories, and combined size
+  - List directory with file sizes
+  - Inputs: `path` (string), `sortBy` ("name" | "size")
 
 - **move_file**
   - Move or rename files and directories
-  - Inputs:
-    - `source` (string)
-    - `destination` (string)
-  - Fails if destination exists
+  - Inputs: `source` (string), `destination` (string)
 
 - **search_files**
-  - Recursively search for files/directories that match or do not match patterns
-  - Inputs:
-    - `path` (string): Starting directory
-    - `pattern` (string): Search pattern
-    - `excludePatterns` (string[]): Exclude any patterns.
-  - Glob-style pattern matching
-  - Returns full paths to matches
+  - Recursively search for files matching patterns
+  - Inputs: `path`, `pattern`, `excludePatterns`
 
 - **directory_tree**
-  - Get recursive JSON tree structure of directory contents
-  - Inputs:
-    - `path` (string): Starting directory
-    - `excludePatterns` (string[]): Exclude any patterns. Glob formats are supported.
-  - Returns:
-    - JSON array where each entry contains:
-      - `name` (string): File/directory name
-      - `type` ('file'|'directory'): Entry type
-      - `children` (array): Present only for directories
-        - Empty array for empty directories
-        - Omitted for files
-  - Output is formatted with 2-space indentation for readability
+  - Get recursive JSON tree structure
+  - Inputs: `path`, `excludePatterns`
 
 - **get_file_info**
   - Get detailed file/directory metadata
   - Input: `path` (string)
-  - Returns:
-    - Size
-    - Creation time
-    - Modified time
-    - Access time
-    - Type (file/directory)
-    - Permissions
 
 - **list_allowed_directories**
-  - List all directories the server is allowed to access
+  - List all accessible directories
   - No input required
-  - Returns:
-    - Directories that this server can read/write from
 
-### Tool annotations (MCP hints)
+### Tool Annotations
 
-This server sets [MCP ToolAnnotations](https://modelcontextprotocol.io/specification/2025-03-26/server/tools#toolannotations)
-on each tool so clients can:
+| Tool                        | readOnlyHint | idempotentHint | destructiveHint |
+| --------------------------- | ------------ | -------------- | --------------- |
+| `read_text_file`            | `true`       | –              | –               |
+| `read_media_file`           | `true`       | –              | –               |
+| `read_multiple_files`       | `true`       | –              | –               |
+| `list_directory`            | `true`       | –              | –               |
+| `list_directory_with_sizes` | `true`       | –              | –               |
+| `directory_tree`            | `true`       | –              | –               |
+| `search_files`              | `true`       | –              | –               |
+| `get_file_info`             | `true`       | –              | –               |
+| `list_allowed_directories`  | `true`       | –              | –               |
+| `create_directory`          | `false`      | `true`         | `false`         |
+| `write_file`                | `false`      | `true`         | `true`          |
+| `edit_file`                 | `false`      | `false`        | `true`          |
+| `move_file`                 | `false`      | `false`        | `false`         |
 
-- Distinguish **read‑only** tools from write‑capable tools.
-- Understand which write operations are **idempotent** (safe to retry with the same arguments).
-- Highlight operations that may be **destructive** (overwriting or heavily mutating data).
-
-The mapping for filesystem tools is:
-
-| Tool                        | readOnlyHint | idempotentHint | destructiveHint | Notes                                            |
-|-----------------------------|--------------|----------------|-----------------|--------------------------------------------------|
-| `read_text_file`            | `true`       | –              | –               | Pure read                                       |
-| `read_media_file`           | `true`       | –              | –               | Pure read                                       |
-| `read_multiple_files`       | `true`       | –              | –               | Pure read                                       |
-| `list_directory`            | `true`       | –              | –               | Pure read                                       |
-| `list_directory_with_sizes` | `true`       | –              | –               | Pure read                                       |
-| `directory_tree`            | `true`       | –              | –               | Pure read                                       |
-| `search_files`              | `true`       | –              | –               | Pure read                                       |
-| `get_file_info`             | `true`       | –              | –               | Pure read                                       |
-| `list_allowed_directories`  | `true`       | –              | –               | Pure read                                       |
-| `create_directory`          | `false`      | `true`         | `false`         | Re‑creating the same dir is a no‑op             |
-| `write_file`                | `false`      | `true`         | `true`          | Overwrites existing files                       |
-| `edit_file`                 | `false`      | `false`        | `true`          | Re‑applying edits can fail or double‑apply      |
-| `move_file`                 | `false`      | `false`        | `false`         | Move/rename only; repeat usually errors         |
+---
 
 ## Security
 
-- **OAuth 2.0 authentication** - All MCP endpoints require a valid Bearer token
+- **OAuth 2.1 authentication** with PKCE for authorization code flow
+- **Token audience validation** - tokens are bound to the resource server
+- **Refresh token rotation** - tokens are rotated on each refresh (OAuth 2.1 requirement)
 - Only directories specified at startup (or via MCP Roots) are accessible
-- CORS is permissive (`*`) - restrict in production via reverse proxy
+- Symlinks are resolved to prevent directory escape attacks
 
 ## License
 
-This MCP server is licensed under the MIT License. This means you are free to use, modify, and distribute the software, subject to the terms and conditions of the MIT License. For more details, please see the LICENSE file in the project repository.
+MIT License. See LICENSE file for details.
 
 ## Credits
 

@@ -3,12 +3,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { InMemoryEventStore } from "@modelcontextprotocol/sdk/examples/shared/inMemoryEventStore.js";
-import {
-  CallToolResult,
-  RootsListChangedNotificationSchema,
-  type Root,
-} from "@modelcontextprotocol/sdk/types.js";
-import express, { Request, Response, NextFunction } from "express";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { RootsListChangedNotificationSchema, type Root } from "@modelcontextprotocol/sdk/types.js";
+import type { Request, Response, NextFunction } from "express";
+import express from "express";
 import cors from "cors";
 import { randomUUID, createHash, randomBytes } from "node:crypto";
 import fs from "fs/promises";
@@ -18,8 +16,9 @@ import { fileURLToPath } from "url";
 import readline from "readline";
 import { z } from "zod";
 import { minimatch } from "minimatch";
-import { normalizePath, expandHome } from './path-utils.js';
-import { getValidRootDirectories } from './roots-utils.js';
+import { normalizePath, expandHome } from "./path-utils.js";
+import { getValidRootDirectories } from "./roots-utils.js";
+import { logger } from "./logger.js";
 import {
   // Function imports
   formatSize,
@@ -32,19 +31,19 @@ import {
   tailFile,
   headFile,
   setAllowedDirectories,
-} from './lib.js';
+} from "./lib.js";
 
 // Get the directory where this script is located
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const projectRoot = path.resolve(__dirname, '..');
-const envPath = path.join(projectRoot, '.env');
+const projectRoot = path.resolve(__dirname, "..");
+const envPath = path.join(projectRoot, ".env");
 
 // Generate random credentials
 function generateRandomCredentials(): { clientId: string; clientSecret: string } {
   return {
-    clientId: randomBytes(16).toString('hex'),
-    clientSecret: randomBytes(32).toString('hex'),
+    clientId: randomBytes(16).toString("hex"),
+    clientSecret: randomBytes(32).toString("hex"),
   };
 }
 
@@ -65,11 +64,11 @@ PORT=24024
 // Load .env file manually
 async function loadEnvFile(): Promise<void> {
   try {
-    const content = await fs.readFile(envPath, 'utf-8');
-    for (const line of content.split('\n')) {
+    const content = await fs.readFile(envPath, "utf-8");
+    for (const line of content.split("\n")) {
       const trimmed = line.trim();
-      if (trimmed && !trimmed.startsWith('#')) {
-        const eqIndex = trimmed.indexOf('=');
+      if (trimmed && !trimmed.startsWith("#")) {
+        const eqIndex = trimmed.indexOf("=");
         if (eqIndex > 0) {
           const key = trimmed.substring(0, eqIndex);
           const value = trimmed.substring(eqIndex + 1);
@@ -94,30 +93,30 @@ async function askYesNo(question: string): Promise<boolean> {
   return new Promise((resolve) => {
     rl.question(question, (answer) => {
       rl.close();
-      resolve(answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes');
+      resolve(answer.toLowerCase() === "y" || answer.toLowerCase() === "yes");
     });
   });
 }
 
 // Handle --init flag
 const rawArgs = process.argv.slice(2);
-const hasInit = rawArgs.includes('--init');
-const hasForce = rawArgs.includes('--force');
+const hasInit = rawArgs.includes("--init");
+const hasForce = rawArgs.includes("--force");
 
 if (hasInit) {
   if (existsSync(envPath) && !hasForce) {
-    console.log('.env file already exists at:', envPath);
-    console.log('Use --force to overwrite.');
+    logger.info(`.env file already exists at: ${envPath}`);
+    logger.info("Use --force to overwrite.");
     process.exit(1);
   }
 
   const credentials = await createEnvFile();
-  console.log('Created .env file with random credentials:\n');
-  console.log(`  CLIENT_ID=${credentials.clientId}`);
-  console.log(`  CLIENT_SECRET=${credentials.clientSecret}`);
-  console.log(`\nFile location: ${envPath}`);
-  console.log('\nYou can now start the server with:');
-  console.log('  node dist/index.js /path/to/allowed/directory');
+  logger.info("Created .env file with random credentials:");
+  logger.info(`  CLIENT_ID=${credentials.clientId}`);
+  logger.info(`  CLIENT_SECRET=${credentials.clientSecret}`);
+  logger.info(`File location: ${envPath}`);
+  logger.info("You can now start the server with:");
+  logger.info("  node dist/index.js /path/to/allowed/directory");
   process.exit(0);
 }
 
@@ -129,53 +128,124 @@ let CLIENT_ID = process.env.CLIENT_ID;
 let CLIENT_SECRET = process.env.CLIENT_SECRET;
 
 if (!CLIENT_ID || !CLIENT_SECRET) {
-  console.log('Missing required environment variables: CLIENT_ID and CLIENT_SECRET\n');
+  logger.warn("Missing required environment variables: CLIENT_ID and CLIENT_SECRET");
 
   if (existsSync(envPath)) {
-    console.log('.env file exists but CLIENT_ID or CLIENT_SECRET is not set.');
-    console.log('Please check your .env file at:', envPath);
+    logger.error(".env file exists but CLIENT_ID or CLIENT_SECRET is not set.");
+    logger.info(`Please check your .env file at: ${envPath}`);
     process.exit(1);
   }
 
   // Check if stdin is a TTY (interactive terminal)
   if (process.stdin.isTTY) {
-    const shouldCreate = await askYesNo('Would you like to create .env with random credentials? (y/n): ');
+    const shouldCreate = await askYesNo(
+      "Would you like to create .env with random credentials? (y/n): "
+    );
 
     if (shouldCreate) {
       const credentials = await createEnvFile();
       CLIENT_ID = credentials.clientId;
       CLIENT_SECRET = credentials.clientSecret;
 
-      console.log('\nCreated .env file with random credentials:\n');
-      console.log(`  CLIENT_ID=${CLIENT_ID}`);
-      console.log(`  CLIENT_SECRET=${CLIENT_SECRET}`);
-      console.log(`\nFile location: ${envPath}\n`);
+      logger.info("Created .env file with random credentials:");
+      logger.info(`  CLIENT_ID=${CLIENT_ID}`);
+      logger.info(`  CLIENT_SECRET=${CLIENT_SECRET}`);
+      logger.info(`File location: ${envPath}`);
     } else {
-      console.log('\nPlease create .env from .env.example or set environment variables.');
-      console.log('You can also use: node dist/index.js --init');
+      logger.info("Please create .env from .env.example or set environment variables.");
+      logger.info("You can also use: node dist/index.js --init");
       process.exit(1);
     }
   } else {
-    console.log('Not running in interactive mode.');
-    console.log('Please either:');
-    console.log('  1. Run with --init to create .env: node dist/index.js --init');
-    console.log('  2. Create .env file manually (see .env.example)');
-    console.log('  3. Set CLIENT_ID and CLIENT_SECRET environment variables');
+    logger.info("Not running in interactive mode.");
+    logger.info("Please either:");
+    logger.info("  1. Run with --init to create .env: node dist/index.js --init");
+    logger.info("  2. Create .env file manually (see .env.example)");
+    logger.info("  3. Set CLIENT_ID and CLIENT_SECRET environment variables");
     process.exit(1);
   }
 }
 
 // Token storage (in production, use Redis or similar)
 const accessTokens: Map<string, { expiresAt: number }> = new Map();
+const refreshTokens: Map<string, { clientId: string; expiresAt: number }> = new Map();
 
-// Token expiration time (1 hour)
-const TOKEN_EXPIRATION_MS = 60 * 60 * 1000;
+// Authorization code storage for PKCE flow
+type AuthorizationCode = {
+  clientId: string;
+  redirectUri: string;
+  codeChallenge: string;
+  codeChallengeMethod: string;
+  expiresAt: number;
+};
+const authorizationCodes: Map<string, AuthorizationCode> = new Map();
+
+// Dynamic client registration storage
+type RegisteredClient = {
+  clientId: string;
+  clientSecret?: string | undefined;
+  redirectUris: string[];
+  clientName?: string | undefined;
+  createdAt: number;
+};
+const registeredClients: Map<string, RegisteredClient> = new Map();
+
+// Pre-register the static client from environment variables
+if (CLIENT_ID) {
+  registeredClients.set(CLIENT_ID, {
+    clientId: CLIENT_ID,
+    clientSecret: CLIENT_SECRET,
+    redirectUris: [
+      "https://chatgpt.com/aip/g/g-*/oauth/callback",
+      "https://chatgpt.com/connector_platform_oauth_redirect",
+      "https://chat.openai.com/connector_platform_oauth_redirect",
+      "http://localhost:3000/callback",
+      "http://127.0.0.1:3000/callback",
+    ],
+    clientName: "Static Admin Client",
+    createdAt: Date.now(),
+  });
+  logger.info(`Pre-registered static client: ${CLIENT_ID}`);
+}
+
+// Token expiration times
+const TOKEN_EXPIRATION_MS = 60 * 60 * 1000; // 1 hour
+const REFRESH_TOKEN_EXPIRATION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const AUTH_CODE_EXPIRATION_MS = 10 * 60 * 1000; // 10 minutes
 
 // Generate access token
 function generateAccessToken(): string {
-  return createHash('sha256')
+  return createHash("sha256")
     .update(randomUUID() + Date.now().toString())
-    .digest('hex');
+    .digest("hex");
+}
+
+// Generate refresh token
+function generateRefreshToken(): string {
+  return randomBytes(32).toString("hex");
+}
+
+// Base64URL encode for PKCE
+function base64UrlEncode(buffer: Buffer): string {
+  return buffer.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+}
+
+// Verify PKCE code challenge
+function verifyCodeChallenge(codeVerifier: string, codeChallenge: string, method: string): boolean {
+  if (method === "S256") {
+    const hash = createHash("sha256").update(codeVerifier).digest();
+    const computed = base64UrlEncode(hash);
+    return computed === codeChallenge;
+  }
+  // plain method (not recommended but supported)
+  return codeVerifier === codeChallenge;
+}
+
+// Get server URL from request
+function getServerUrl(req: Request): string {
+  const protocol = req.headers["x-forwarded-proto"] || req.protocol || "http";
+  const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
+  return `${protocol}://${host}`;
 }
 
 // Validate access token
@@ -193,10 +263,10 @@ function validateAccessToken(token: string): boolean {
 function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   const authHeader = req.headers.authorization;
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
     res.status(401).json({
-      error: 'unauthorized',
-      error_description: 'Missing or invalid Authorization header. Use Bearer token.',
+      error: "unauthorized",
+      error_description: "Missing or invalid Authorization header. Use Bearer token.",
     });
     return;
   }
@@ -204,8 +274,8 @@ function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   const token = authHeader.substring(7);
   if (!validateAccessToken(token)) {
     res.status(401).json({
-      error: 'invalid_token',
-      error_description: 'Access token is invalid or expired.',
+      error: "invalid_token",
+      error_description: "Access token is invalid or expired.",
     });
     return;
   }
@@ -218,20 +288,36 @@ function isUnsafePath(dirPath: string): boolean {
   const normalized = path.resolve(dirPath);
 
   // Root directory
-  if (normalized === '/') return true;
+  if (normalized === "/") return true;
 
   // Home directory (Linux/Mac)
-  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+  const homeDir = process.env.HOME || process.env.USERPROFILE || "";
   if (homeDir && normalized === path.resolve(homeDir)) return true;
 
   // System directories (Linux/Mac)
   const unsafePaths = [
-    '/bin', '/sbin', '/usr', '/etc', '/var', '/lib', '/lib64',
-    '/boot', '/dev', '/proc', '/sys', '/root',
+    "/bin",
+    "/sbin",
+    "/usr",
+    "/etc",
+    "/var",
+    "/lib",
+    "/lib64",
+    "/boot",
+    "/dev",
+    "/proc",
+    "/sys",
+    "/root",
     // Mac specific
-    '/System', '/Library', '/Applications', '/Users',
+    "/System",
+    "/Library",
+    "/Applications",
+    "/Users",
     // Windows
-    'C:\\', 'C:\\Windows', 'C:\\Program Files', 'C:\\Program Files (x86)',
+    "C:\\",
+    "C:\\Windows",
+    "C:\\Program Files",
+    "C:\\Program Files (x86)",
   ];
 
   for (const unsafe of unsafePaths) {
@@ -242,27 +328,24 @@ function isUnsafePath(dirPath: string): boolean {
 }
 
 // Command line argument parsing - filter out flags
-const args = process.argv.slice(2).filter(arg => !arg.startsWith('--'));
+const args = process.argv.slice(2).filter((arg) => !arg.startsWith("--"));
 
 // If no directories provided, try to use current directory if safe
 if (args.length === 0) {
   const cwd = process.cwd();
   if (isUnsafePath(cwd)) {
-    console.error("No directories specified and current directory is unsafe to serve.");
-    console.error(`Current directory: ${cwd}`);
-    console.error("");
-    console.error("Usage: mcpfs [allowed-directory] [additional-directories...]");
-    console.error("");
-    console.error("For safety, the server won't automatically serve:");
-    console.error("  - Root directory (/)");
-    console.error("  - Home directory (~)");
-    console.error("  - System directories (/usr, /etc, /var, etc.)");
-    console.error("");
-    console.error("Please specify allowed directories explicitly, or run from a project directory.");
+    logger.error("No directories specified and current directory is unsafe to serve.");
+    logger.error(`Current directory: ${cwd}`);
+    logger.info("Usage: mcpfs [allowed-directory] [additional-directories...]");
+    logger.info("For safety, the server won't automatically serve:");
+    logger.info("  - Root directory (/)");
+    logger.info("  - Home directory (~)");
+    logger.info("  - System directories (/usr, /etc, /var, etc.)");
+    logger.info("Please specify allowed directories explicitly, or run from a project directory.");
     process.exit(1);
   } else {
     args.push(cwd);
-    console.error(`No directories specified. Serving current directory: ${cwd}`);
+    logger.info(`No directories specified. Serving current directory: ${cwd}`);
   }
 }
 
@@ -276,7 +359,7 @@ let allowedDirectories = await Promise.all(
       // This ensures we know the real paths and can validate against them later
       const resolved = await fs.realpath(absolute);
       return normalizePath(resolved);
-    } catch (error) {
+    } catch {
       // If we can't resolve (doesn't exist), use the normalized absolute path
       // This allows configuring allowed dirs that will be created later
       return normalizePath(absolute);
@@ -285,88 +368,82 @@ let allowedDirectories = await Promise.all(
 );
 
 // Validate that all directories exist and are accessible
-await Promise.all(allowedDirectories.map(async (dir) => {
-  try {
-    const stats = await fs.stat(dir);
-    if (!stats.isDirectory()) {
-      console.error(`Error: ${dir} is not a directory`);
+await Promise.all(
+  allowedDirectories.map(async (dir) => {
+    try {
+      const stats = await fs.stat(dir);
+      if (!stats.isDirectory()) {
+        logger.error(`Error: ${dir} is not a directory`);
+        process.exit(1);
+      }
+    } catch (err) {
+      logger.error(`Error accessing directory ${dir}`, err);
       process.exit(1);
     }
-  } catch (error) {
-    console.error(`Error accessing directory ${dir}:`, error);
-    process.exit(1);
-  }
-}));
+  })
+);
 
 // Initialize the global allowedDirectories in lib.ts
 setAllowedDirectories(allowedDirectories);
 
-// Schema definitions
-const ReadTextFileArgsSchema = z.object({
-  path: z.string(),
-  tail: z.number().optional().describe('If provided, returns only the last N lines of the file'),
-  head: z.number().optional().describe('If provided, returns only the first N lines of the file')
-});
+// Type definitions for tool arguments (with undefined to satisfy exactOptionalPropertyTypes)
+type ReadTextFileArgs = {
+  path: string;
+  tail?: number | undefined;
+  head?: number | undefined;
+};
 
-const ReadMediaFileArgsSchema = z.object({
-  path: z.string()
-});
+type ReadMediaFileArgs = {
+  path: string;
+};
 
-const ReadMultipleFilesArgsSchema = z.object({
-  paths: z
-    .array(z.string())
-    .min(1, "At least one file path must be provided")
-    .describe("Array of file paths to read. Each path must be a string pointing to a valid file within allowed directories."),
-});
+type ReadMultipleFilesArgs = {
+  paths: string[];
+};
 
-const WriteFileArgsSchema = z.object({
-  path: z.string(),
-  content: z.string(),
-});
+type WriteFileArgs = {
+  path: string;
+  content: string;
+};
 
-const EditOperation = z.object({
-  oldText: z.string().describe('Text to search for - must match exactly'),
-  newText: z.string().describe('Text to replace with')
-});
+type EditFileArgs = {
+  path: string;
+  edits: Array<{ oldText: string; newText: string }>;
+  dryRun?: boolean | undefined;
+};
 
-const EditFileArgsSchema = z.object({
-  path: z.string(),
-  edits: z.array(EditOperation),
-  dryRun: z.boolean().default(false).describe('Preview changes using git-style diff format')
-});
+type CreateDirectoryArgs = {
+  path: string;
+};
 
-const CreateDirectoryArgsSchema = z.object({
-  path: z.string(),
-});
+type ListDirectoryArgs = {
+  path: string;
+};
 
-const ListDirectoryArgsSchema = z.object({
-  path: z.string(),
-});
+type ListDirectoryWithSizesArgs = {
+  path: string;
+  sortBy?: "name" | "size" | undefined;
+};
 
-const ListDirectoryWithSizesArgsSchema = z.object({
-  path: z.string(),
-  sortBy: z.enum(['name', 'size']).optional().default('name').describe('Sort entries by name or size'),
-});
+type DirectoryTreeArgs = {
+  path: string;
+  excludePatterns?: string[] | undefined;
+};
 
-const DirectoryTreeArgsSchema = z.object({
-  path: z.string(),
-  excludePatterns: z.array(z.string()).optional().default([])
-});
+type MoveFileArgs = {
+  source: string;
+  destination: string;
+};
 
-const MoveFileArgsSchema = z.object({
-  source: z.string(),
-  destination: z.string(),
-});
+type SearchFilesArgs = {
+  path: string;
+  pattern: string;
+  excludePatterns?: string[] | undefined;
+};
 
-const SearchFilesArgsSchema = z.object({
-  path: z.string(),
-  pattern: z.string(),
-  excludePatterns: z.array(z.string()).optional().default([])
-});
-
-const GetFileInfoArgsSchema = z.object({
-  path: z.string(),
-});
+type GetFileInfoArgs = {
+  path: string;
+};
 
 // Reads a file as a stream of buffers, concatenates them, and then encodes
 // the result to a Base64 string. This is a memory-efficient way to handle
@@ -375,30 +452,28 @@ async function readFileAsBase64Stream(filePath: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const stream = createReadStream(filePath);
     const chunks: Buffer[] = [];
-    stream.on('data', (chunk) => {
+    stream.on("data", (chunk) => {
       chunks.push(chunk as Buffer);
     });
-    stream.on('end', () => {
+    stream.on("end", () => {
       const finalBuffer = Buffer.concat(chunks);
-      resolve(finalBuffer.toString('base64'));
+      resolve(finalBuffer.toString("base64"));
     });
-    stream.on('error', (err) => reject(err));
+    stream.on("error", (err) => reject(err));
   });
 }
 
 // Factory function to create a new MCP server instance
 function createServer() {
-  const server = new McpServer(
-    {
-      name: "secure-filesystem-server",
-      version: "0.2.0",
-    }
-  );
+  const server = new McpServer({
+    name: "secure-filesystem-server",
+    version: "0.2.0",
+  });
 
   // Tool registrations
 
   // read_file (deprecated) and read_text_file
-  const readTextFileHandler = async (args: z.infer<typeof ReadTextFileArgsSchema>) => {
+  const readTextFileHandler = async (args: ReadTextFileArgs) => {
     const validPath = await validatePath(args.path);
 
     if (args.head && args.tail) {
@@ -416,7 +491,7 @@ function createServer() {
 
     return {
       content: [{ type: "text" as const, text: content }],
-      structuredContent: { content }
+      structuredContent: { content },
     };
   };
 
@@ -424,10 +499,21 @@ function createServer() {
     "read_file",
     {
       title: "Read File (Deprecated)",
-      description: "Read the complete contents of a file as text. DEPRECATED: Use read_text_file instead.",
-      inputSchema: ReadTextFileArgsSchema.shape,
+      description:
+        "Read the complete contents of a file as text. DEPRECATED: Use read_text_file instead.",
+      inputSchema: {
+        path: z.string(),
+        tail: z
+          .number()
+          .optional()
+          .describe("If provided, returns only the last N lines of the file"),
+        head: z
+          .number()
+          .optional()
+          .describe("If provided, returns only the first N lines of the file"),
+      },
       outputSchema: { content: z.string() },
-      annotations: { readOnlyHint: true }
+      annotations: { readOnlyHint: true },
     },
     readTextFileHandler
   );
@@ -446,11 +532,17 @@ function createServer() {
         "Only works within allowed directories.",
       inputSchema: {
         path: z.string(),
-        tail: z.number().optional().describe("If provided, returns only the last N lines of the file"),
-        head: z.number().optional().describe("If provided, returns only the first N lines of the file")
+        tail: z
+          .number()
+          .optional()
+          .describe("If provided, returns only the last N lines of the file"),
+        head: z
+          .number()
+          .optional()
+          .describe("If provided, returns only the first N lines of the file"),
       },
       outputSchema: { content: z.string() },
-      annotations: { readOnlyHint: true }
+      annotations: { readOnlyHint: true },
     },
     readTextFileHandler
   );
@@ -463,18 +555,20 @@ function createServer() {
         "Read an image or audio file. Returns the base64 encoded data and MIME type. " +
         "Only works within allowed directories.",
       inputSchema: {
-        path: z.string()
+        path: z.string(),
       },
       outputSchema: {
-        content: z.array(z.object({
-          type: z.enum(["image", "audio", "blob"]),
-          data: z.string(),
-          mimeType: z.string()
-        }))
+        content: z.array(
+          z.object({
+            type: z.enum(["image", "audio", "blob"]),
+            data: z.string(),
+            mimeType: z.string(),
+          })
+        ),
       },
-      annotations: { readOnlyHint: true }
+      annotations: { readOnlyHint: true },
     },
-    async (args: z.infer<typeof ReadMediaFileArgsSchema>) => {
+    async (args: ReadMediaFileArgs) => {
       const validPath = await validatePath(args.path);
       const extension = path.extname(validPath).toLowerCase();
       const mimeTypes: Record<string, string> = {
@@ -497,12 +591,12 @@ function createServer() {
         ? "image"
         : mimeType.startsWith("audio/")
           ? "audio"
-          // Fallback for other binary types, not officially supported by the spec but has been used for some time
-          : "blob";
-      const contentItem = { type: type as 'image' | 'audio' | 'blob', data, mimeType };
+          : // Fallback for other binary types, not officially supported by the spec but has been used for some time
+            "blob";
+      const contentItem = { type: type as "image" | "audio" | "blob", data, mimeType };
       return {
         content: [contentItem],
-        structuredContent: { content: [contentItem] }
+        structuredContent: { content: [contentItem] },
       } as unknown as CallToolResult;
     }
   );
@@ -518,14 +612,17 @@ function createServer() {
         "path as a reference. Failed reads for individual files won't stop " +
         "the entire operation. Only works within allowed directories.",
       inputSchema: {
-        paths: z.array(z.string())
+        paths: z
+          .array(z.string())
           .min(1)
-          .describe("Array of file paths to read. Each path must be a string pointing to a valid file within allowed directories.")
+          .describe(
+            "Array of file paths to read. Each path must be a string pointing to a valid file within allowed directories."
+          ),
       },
       outputSchema: { content: z.string() },
-      annotations: { readOnlyHint: true }
+      annotations: { readOnlyHint: true },
     },
-    async (args: z.infer<typeof ReadMultipleFilesArgsSchema>) => {
+    async (args: ReadMultipleFilesArgs) => {
       const results = await Promise.all(
         args.paths.map(async (filePath: string) => {
           try {
@@ -536,12 +633,12 @@ function createServer() {
             const errorMessage = error instanceof Error ? error.message : String(error);
             return `${filePath}: Error - ${errorMessage}`;
           }
-        }),
+        })
       );
       const text = results.join("\n---\n");
       return {
         content: [{ type: "text" as const, text }],
-        structuredContent: { content: text }
+        structuredContent: { content: text },
       };
     }
   );
@@ -556,18 +653,18 @@ function createServer() {
         "Handles text content with proper encoding. Only works within allowed directories.",
       inputSchema: {
         path: z.string(),
-        content: z.string()
+        content: z.string(),
       },
       outputSchema: { content: z.string() },
-      annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: true }
+      annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: true },
     },
-    async (args: z.infer<typeof WriteFileArgsSchema>) => {
+    async (args: WriteFileArgs) => {
       const validPath = await validatePath(args.path);
       await writeFileContent(validPath, args.content);
       const text = `Successfully wrote to ${args.path}`;
       return {
         content: [{ type: "text" as const, text }],
-        structuredContent: { content: text }
+        structuredContent: { content: text },
       };
     }
   );
@@ -582,21 +679,23 @@ function createServer() {
         "Only works within allowed directories.",
       inputSchema: {
         path: z.string(),
-        edits: z.array(z.object({
-          oldText: z.string().describe("Text to search for - must match exactly"),
-          newText: z.string().describe("Text to replace with")
-        })),
-        dryRun: z.boolean().default(false).describe("Preview changes using git-style diff format")
+        edits: z.array(
+          z.object({
+            oldText: z.string().describe("Text to search for - must match exactly"),
+            newText: z.string().describe("Text to replace with"),
+          })
+        ),
+        dryRun: z.boolean().default(false).describe("Preview changes using git-style diff format"),
       },
       outputSchema: { content: z.string() },
-      annotations: { readOnlyHint: false, idempotentHint: false, destructiveHint: true }
+      annotations: { readOnlyHint: false, idempotentHint: false, destructiveHint: true },
     },
-    async (args: z.infer<typeof EditFileArgsSchema>) => {
+    async (args: EditFileArgs) => {
       const validPath = await validatePath(args.path);
       const result = await applyFileEdits(validPath, args.edits, args.dryRun);
       return {
         content: [{ type: "text" as const, text: result }],
-        structuredContent: { content: result }
+        structuredContent: { content: result },
       };
     }
   );
@@ -611,18 +710,18 @@ function createServer() {
         "this operation will succeed silently. Perfect for setting up directory " +
         "structures for projects or ensuring required paths exist. Only works within allowed directories.",
       inputSchema: {
-        path: z.string()
+        path: z.string(),
       },
       outputSchema: { content: z.string() },
-      annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false }
+      annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false },
     },
-    async (args: z.infer<typeof CreateDirectoryArgsSchema>) => {
+    async (args: CreateDirectoryArgs) => {
       const validPath = await validatePath(args.path);
       await fs.mkdir(validPath, { recursive: true });
       const text = `Successfully created directory ${args.path}`;
       return {
         content: [{ type: "text" as const, text }],
-        structuredContent: { content: text }
+        structuredContent: { content: text },
       };
     }
   );
@@ -637,12 +736,12 @@ function createServer() {
         "prefixes. This tool is essential for understanding directory structure and " +
         "finding specific files within a directory. Only works within allowed directories.",
       inputSchema: {
-        path: z.string()
+        path: z.string(),
       },
       outputSchema: { content: z.string() },
-      annotations: { readOnlyHint: true }
+      annotations: { readOnlyHint: true },
     },
-    async (args: z.infer<typeof ListDirectoryArgsSchema>) => {
+    async (args: ListDirectoryArgs) => {
       const validPath = await validatePath(args.path);
       const entries = await fs.readdir(validPath, { withFileTypes: true });
       const formatted = entries
@@ -650,7 +749,7 @@ function createServer() {
         .join("\n");
       return {
         content: [{ type: "text" as const, text: formatted }],
-        structuredContent: { content: formatted }
+        structuredContent: { content: formatted },
       };
     }
   );
@@ -666,12 +765,16 @@ function createServer() {
         "finding specific files within a directory. Only works within allowed directories.",
       inputSchema: {
         path: z.string(),
-        sortBy: z.enum(["name", "size"]).optional().default("name").describe("Sort entries by name or size")
+        sortBy: z
+          .enum(["name", "size"])
+          .optional()
+          .default("name")
+          .describe("Sort entries by name or size"),
       },
       outputSchema: { content: z.string() },
-      annotations: { readOnlyHint: true }
+      annotations: { readOnlyHint: true },
     },
-    async (args: z.infer<typeof ListDirectoryWithSizesArgsSchema>) => {
+    async (args: ListDirectoryWithSizesArgs) => {
       const validPath = await validatePath(args.path);
       const entries = await fs.readdir(validPath, { withFileTypes: true });
 
@@ -685,14 +788,14 @@ function createServer() {
               name: entry.name,
               isDirectory: entry.isDirectory(),
               size: stats.size,
-              mtime: stats.mtime
+              mtime: stats.mtime,
             };
-          } catch (error) {
+          } catch {
             return {
               name: entry.name,
               isDirectory: entry.isDirectory(),
               size: 0,
-              mtime: new Date(0)
+              mtime: new Date(0),
             };
           }
         })
@@ -700,7 +803,7 @@ function createServer() {
 
       // Sort entries based on sortBy parameter
       const sortedEntries = [...detailedEntries].sort((a, b) => {
-        if (args.sortBy === 'size') {
+        if (args.sortBy === "size") {
           return b.size - a.size; // Descending by size
         }
         // Default sort by name
@@ -708,28 +811,32 @@ function createServer() {
       });
 
       // Format the output
-      const formattedEntries = sortedEntries.map(entry =>
-        `${entry.isDirectory ? "[DIR]" : "[FILE]"} ${entry.name.padEnd(30)} ${
-          entry.isDirectory ? "" : formatSize(entry.size).padStart(10)
-        }`
+      const formattedEntries = sortedEntries.map(
+        (entry) =>
+          `${entry.isDirectory ? "[DIR]" : "[FILE]"} ${entry.name.padEnd(30)} ${
+            entry.isDirectory ? "" : formatSize(entry.size).padStart(10)
+          }`
       );
 
       // Add summary
-      const totalFiles = detailedEntries.filter(e => !e.isDirectory).length;
-      const totalDirs = detailedEntries.filter(e => e.isDirectory).length;
-      const totalSize = detailedEntries.reduce((sum, entry) => sum + (entry.isDirectory ? 0 : entry.size), 0);
+      const totalFiles = detailedEntries.filter((e) => !e.isDirectory).length;
+      const totalDirs = detailedEntries.filter((e) => e.isDirectory).length;
+      const totalSize = detailedEntries.reduce(
+        (sum, entry) => sum + (entry.isDirectory ? 0 : entry.size),
+        0
+      );
 
       const summary = [
         "",
         `Total: ${totalFiles} files, ${totalDirs} directories`,
-        `Combined size: ${formatSize(totalSize)}`
+        `Combined size: ${formatSize(totalSize)}`,
       ];
 
       const text = [...formattedEntries, ...summary].join("\n");
       const contentBlock = { type: "text" as const, text };
       return {
         content: [contentBlock],
-        structuredContent: { content: text }
+        structuredContent: { content: text },
       };
     }
   );
@@ -745,42 +852,46 @@ function createServer() {
         "The output is formatted with 2-space indentation for readability. Only works within allowed directories.",
       inputSchema: {
         path: z.string(),
-        excludePatterns: z.array(z.string()).optional().default([])
+        excludePatterns: z.array(z.string()).optional().default([]),
       },
       outputSchema: { content: z.string() },
-      annotations: { readOnlyHint: true }
+      annotations: { readOnlyHint: true },
     },
-    async (args: z.infer<typeof DirectoryTreeArgsSchema>) => {
-      interface TreeEntry {
+    async (args: DirectoryTreeArgs) => {
+      type TreeEntry = {
         name: string;
-        type: 'file' | 'directory';
+        type: "file" | "directory";
         children?: TreeEntry[];
-      }
+      };
       const rootPath = args.path;
 
-      async function buildTree(currentPath: string, excludePatterns: string[] = []): Promise<TreeEntry[]> {
+      async function buildTree(
+        currentPath: string,
+        excludePatterns: string[] = []
+      ): Promise<TreeEntry[]> {
         const validPath = await validatePath(currentPath);
         const entries = await fs.readdir(validPath, { withFileTypes: true });
         const result: TreeEntry[] = [];
 
         for (const entry of entries) {
           const relativePath = path.relative(rootPath, path.join(currentPath, entry.name));
-          const shouldExclude = excludePatterns.some(pattern => {
-            if (pattern.includes('*')) {
+          const shouldExclude = excludePatterns.some((pattern) => {
+            if (pattern.includes("*")) {
               return minimatch(relativePath, pattern, { dot: true });
             }
             // For files: match exact name or as part of path
             // For directories: match as directory path
-            return minimatch(relativePath, pattern, { dot: true }) ||
+            return (
+              minimatch(relativePath, pattern, { dot: true }) ||
               minimatch(relativePath, `**/${pattern}`, { dot: true }) ||
-              minimatch(relativePath, `**/${pattern}/**`, { dot: true });
+              minimatch(relativePath, `**/${pattern}/**`, { dot: true })
+            );
           });
-          if (shouldExclude)
-            continue;
+          if (shouldExclude) continue;
 
           const entryData: TreeEntry = {
             name: entry.name,
-            type: entry.isDirectory() ? 'directory' : 'file'
+            type: entry.isDirectory() ? "directory" : "file",
           };
 
           if (entry.isDirectory()) {
@@ -799,7 +910,7 @@ function createServer() {
       const contentBlock = { type: "text" as const, text };
       return {
         content: [contentBlock],
-        structuredContent: { content: text }
+        structuredContent: { content: text },
       };
     }
   );
@@ -815,12 +926,12 @@ function createServer() {
         "for simple renaming within the same directory. Both source and destination must be within allowed directories.",
       inputSchema: {
         source: z.string(),
-        destination: z.string()
+        destination: z.string(),
       },
       outputSchema: { content: z.string() },
-      annotations: { readOnlyHint: false, idempotentHint: false, destructiveHint: false }
+      annotations: { readOnlyHint: false, idempotentHint: false, destructiveHint: false },
     },
-    async (args: z.infer<typeof MoveFileArgsSchema>) => {
+    async (args: MoveFileArgs) => {
       const validSourcePath = await validatePath(args.source);
       const validDestPath = await validatePath(args.destination);
       await fs.rename(validSourcePath, validDestPath);
@@ -828,7 +939,7 @@ function createServer() {
       const contentBlock = { type: "text" as const, text };
       return {
         content: [contentBlock],
-        structuredContent: { content: text }
+        structuredContent: { content: text },
       };
     }
   );
@@ -846,18 +957,20 @@ function createServer() {
       inputSchema: {
         path: z.string(),
         pattern: z.string(),
-        excludePatterns: z.array(z.string()).optional().default([])
+        excludePatterns: z.array(z.string()).optional().default([]),
       },
       outputSchema: { content: z.string() },
-      annotations: { readOnlyHint: true }
+      annotations: { readOnlyHint: true },
     },
-    async (args: z.infer<typeof SearchFilesArgsSchema>) => {
+    async (args: SearchFilesArgs) => {
       const validPath = await validatePath(args.path);
-      const results = await searchFilesWithValidation(validPath, args.pattern, allowedDirectories, { excludePatterns: args.excludePatterns });
+      const results = await searchFilesWithValidation(validPath, args.pattern, allowedDirectories, {
+        excludePatterns: args.excludePatterns,
+      });
       const text = results.length > 0 ? results.join("\n") : "No matches found";
       return {
         content: [{ type: "text" as const, text }],
-        structuredContent: { content: text }
+        structuredContent: { content: text },
       };
     }
   );
@@ -872,12 +985,12 @@ function createServer() {
         "and type. This tool is perfect for understanding file characteristics " +
         "without reading the actual content. Only works within allowed directories.",
       inputSchema: {
-        path: z.string()
+        path: z.string(),
       },
       outputSchema: { content: z.string() },
-      annotations: { readOnlyHint: true }
+      annotations: { readOnlyHint: true },
     },
-    async (args: z.infer<typeof GetFileInfoArgsSchema>) => {
+    async (args: GetFileInfoArgs) => {
       const validPath = await validatePath(args.path);
       const info = await getFileStats(validPath);
       const text = Object.entries(info)
@@ -885,7 +998,7 @@ function createServer() {
         .join("\n");
       return {
         content: [{ type: "text" as const, text }],
-        structuredContent: { content: text }
+        structuredContent: { content: text },
       };
     }
   );
@@ -901,13 +1014,13 @@ function createServer() {
         "before trying to access files.",
       inputSchema: {},
       outputSchema: { content: z.string() },
-      annotations: { readOnlyHint: true }
+      annotations: { readOnlyHint: true },
     },
     async () => {
-      const text = `Allowed directories:\n${allowedDirectories.join('\n')}`;
+      const text = `Allowed directories:\n${allowedDirectories.join("\n")}`;
       return {
         content: [{ type: "text" as const, text }],
-        structuredContent: { content: text }
+        structuredContent: { content: text },
       };
     }
   );
@@ -918,9 +1031,11 @@ function createServer() {
     if (validatedRootDirs.length > 0) {
       allowedDirectories = [...validatedRootDirs];
       setAllowedDirectories(allowedDirectories); // Update the global state in lib.ts
-      console.error(`Updated allowed directories from MCP roots: ${validatedRootDirs.length} valid directories`);
+      logger.info(
+        `Updated allowed directories from MCP roots: ${validatedRootDirs.length} valid directories`
+      );
     } else {
-      console.error("No valid root directories provided by client");
+      logger.warn("No valid root directories provided by client");
     }
   }
 
@@ -928,11 +1043,11 @@ function createServer() {
   server.server.setNotificationHandler(RootsListChangedNotificationSchema, async () => {
     try {
       const response = await server.server.listRoots();
-      if (response && 'roots' in response) {
+      if (response && "roots" in response) {
         await updateAllowedDirectoriesFromRoots(response.roots);
       }
-    } catch (error) {
-      console.error("Failed to request roots from client:", error instanceof Error ? error.message : String(error));
+    } catch (err) {
+      logger.error("Failed to request roots from client", err);
     }
   });
 
@@ -943,19 +1058,23 @@ function createServer() {
     if (clientCapabilities?.roots) {
       try {
         const response = await server.server.listRoots();
-        if (response && 'roots' in response) {
+        if (response && "roots" in response) {
           await updateAllowedDirectoriesFromRoots(response.roots);
         } else {
-          console.error("Client returned no roots set, keeping current settings");
+          logger.warn("Client returned no roots set, keeping current settings");
         }
-      } catch (error) {
-        console.error("Failed to request initial roots from client:", error instanceof Error ? error.message : String(error));
+      } catch (err) {
+        logger.error("Failed to request initial roots from client", err);
       }
     } else {
       if (allowedDirectories.length > 0) {
-        console.error("Client does not support MCP Roots, using allowed directories set from server args:", allowedDirectories);
+        logger.info(
+          `Client does not support MCP Roots, using allowed directories set from server args: ${allowedDirectories.join(", ")}`
+        );
       } else {
-        throw new Error(`Server cannot operate: No allowed directories available. Server was started without command-line directories and client either does not support MCP roots protocol or provided empty roots. Please either: 1) Start server with directory arguments, or 2) Use a client that supports MCP roots protocol and provides valid root directories.`);
+        throw new Error(
+          `Server cannot operate: No allowed directories available. Server was started without command-line directories and client either does not support MCP roots protocol or provided empty roots. Please either: 1) Start server with directory arguments, or 2) Use a client that supports MCP roots protocol and provides valid root directories.`
+        );
       }
     }
   };
@@ -975,60 +1094,523 @@ app.use(
   })
 );
 
-// OAuth Token Endpoint - Client Credentials Grant
-// Uses express.json/urlencoded only for this route
-app.post("/token", express.json(), express.urlencoded({ extended: true }), (req: Request, res: Response) => {
-  const grantType = req.body.grant_type;
-  const clientId = req.body.client_id;
-  const clientSecret = req.body.client_secret;
+// OAuth 2.1 Discovery Endpoints (RFC 9728, RFC 8414)
 
-  // Validate grant type
-  if (grantType !== 'client_credentials') {
-    res.status(400).json({
-      error: 'unsupported_grant_type',
-      error_description: 'Only client_credentials grant type is supported.',
-    });
-    return;
-  }
-
-  // Validate client credentials
-  if (clientId !== CLIENT_ID || clientSecret !== CLIENT_SECRET) {
-    res.status(401).json({
-      error: 'invalid_client',
-      error_description: 'Invalid client_id or client_secret.',
-    });
-    return;
-  }
-
-  // Generate and store access token
-  const accessToken = generateAccessToken();
-  const expiresIn = TOKEN_EXPIRATION_MS / 1000; // in seconds
-  accessTokens.set(accessToken, {
-    expiresAt: Date.now() + TOKEN_EXPIRATION_MS,
-  });
-
-  console.log(`Access token issued for client: ${clientId}`);
-
+// Protected Resource Metadata (RFC 9728)
+app.get("/.well-known/oauth-protected-resource", (req: Request, res: Response) => {
+  const serverUrl = getServerUrl(req);
   res.json({
-    access_token: accessToken,
-    token_type: 'Bearer',
-    expires_in: expiresIn,
+    resource: serverUrl,
+    authorization_servers: [serverUrl],
+    bearer_methods_supported: ["header"],
   });
 });
+
+// Authorization Server Metadata (RFC 8414)
+app.get("/.well-known/oauth-authorization-server", (req: Request, res: Response) => {
+  const serverUrl = getServerUrl(req);
+  res.json({
+    issuer: serverUrl,
+    authorization_endpoint: `${serverUrl}/authorize`,
+    token_endpoint: `${serverUrl}/token`,
+    registration_endpoint: `${serverUrl}/register`,
+    response_types_supported: ["code"],
+    grant_types_supported: ["authorization_code", "refresh_token", "client_credentials"],
+    token_endpoint_auth_methods_supported: ["client_secret_post"],
+    code_challenge_methods_supported: ["S256"],
+    service_documentation: "https://github.com/jeswin/mcpfs",
+  });
+});
+
+// Dynamic Client Registration (RFC 7591)
+app.post("/register", express.json(), (req: Request, res: Response) => {
+  const { redirect_uris, client_name } = req.body;
+
+  if (!redirect_uris || !Array.isArray(redirect_uris) || redirect_uris.length === 0) {
+    res.status(400).json({
+      error: "invalid_redirect_uri",
+      error_description: "At least one redirect_uri is required",
+    });
+    return;
+  }
+
+  const clientId = randomBytes(16).toString("hex");
+  const clientSecret = randomBytes(32).toString("hex");
+
+  registeredClients.set(clientId, {
+    clientId,
+    clientSecret,
+    redirectUris: redirect_uris,
+    clientName: client_name,
+    createdAt: Date.now(),
+  });
+
+  logger.info(`Registered new client: ${clientId} (${client_name || "unnamed"})`);
+
+  res.status(201).json({
+    client_id: clientId,
+    client_secret: clientSecret,
+    client_id_issued_at: Math.floor(Date.now() / 1000),
+    redirect_uris,
+    client_name,
+  });
+});
+
+// Authorization Endpoint with PKCE - Shows consent screen
+app.get("/authorize", (req: Request, res: Response) => {
+  const { response_type, client_id, redirect_uri, state, code_challenge, code_challenge_method } =
+    req.query as Record<string, string>;
+
+  // Validate required parameters
+  if (response_type !== "code") {
+    res.status(400).send("Invalid response_type. Only 'code' is supported.");
+    return;
+  }
+
+  if (!client_id) {
+    res.status(400).send("Missing client_id");
+    return;
+  }
+
+  // Check if client is registered
+  const client = registeredClients.get(client_id);
+  if (!client) {
+    res.status(400).send(`Unknown client_id: ${client_id}`);
+    return;
+  }
+
+  if (!redirect_uri) {
+    res.status(400).send("Missing redirect_uri");
+    return;
+  }
+
+  // Validate redirect_uri against registered URIs (with wildcard support)
+  const isValidRedirect = client.redirectUris.some((uri) => {
+    if (uri.includes("*")) {
+      const pattern = uri.replace(/\*/g, ".*");
+      return new RegExp(`^${pattern}$`).test(redirect_uri);
+    }
+    return uri === redirect_uri;
+  });
+
+  if (!isValidRedirect) {
+    res.status(400).send(`Invalid redirect_uri: ${redirect_uri}`);
+    return;
+  }
+
+  if (!code_challenge || !code_challenge_method) {
+    res.status(400).send("PKCE required: missing code_challenge or code_challenge_method");
+    return;
+  }
+
+  if (code_challenge_method !== "S256") {
+    res.status(400).send("Only S256 code_challenge_method is supported");
+    return;
+  }
+
+  // Show consent screen
+  const clientName = client.clientName || client_id;
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Authorize Access - mcpfs</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .card {
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+      padding: 40px;
+      max-width: 420px;
+      width: 100%;
+    }
+    h1 {
+      color: #1a202c;
+      font-size: 24px;
+      margin-bottom: 8px;
+    }
+    .subtitle {
+      color: #718096;
+      font-size: 14px;
+      margin-bottom: 24px;
+    }
+    .client-info {
+      background: #f7fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 24px;
+    }
+    .client-name {
+      font-weight: 600;
+      color: #2d3748;
+      font-size: 16px;
+    }
+    .permissions {
+      margin-bottom: 24px;
+    }
+    .permissions h3 {
+      color: #4a5568;
+      font-size: 14px;
+      margin-bottom: 12px;
+    }
+    .permission-item {
+      display: flex;
+      align-items: center;
+      padding: 8px 0;
+      color: #4a5568;
+      font-size: 14px;
+    }
+    .permission-item::before {
+      content: "✓";
+      color: #48bb78;
+      font-weight: bold;
+      margin-right: 10px;
+    }
+    .buttons {
+      display: flex;
+      gap: 12px;
+    }
+    button {
+      flex: 1;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .allow {
+      background: #667eea;
+      color: white;
+      border: none;
+    }
+    .allow:hover { background: #5a67d8; }
+    .deny {
+      background: white;
+      color: #4a5568;
+      border: 1px solid #e2e8f0;
+    }
+    .deny:hover { background: #f7fafc; }
+    .directories {
+      margin-top: 16px;
+      padding: 12px;
+      background: #fffaf0;
+      border: 1px solid #fbd38d;
+      border-radius: 8px;
+      font-size: 12px;
+      color: #744210;
+    }
+    .directories strong { display: block; margin-bottom: 4px; }
+    .dir-list { font-family: monospace; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Authorize Access</h1>
+    <p class="subtitle">An application is requesting access to your files</p>
+
+    <div class="client-info">
+      <div class="client-name">${clientName}</div>
+    </div>
+
+    <div class="permissions">
+      <h3>This application will be able to:</h3>
+      <div class="permission-item">Read files and directories</div>
+      <div class="permission-item">Write and modify files</div>
+      <div class="permission-item">Create and delete directories</div>
+      <div class="permission-item">Search and list files</div>
+    </div>
+
+    <div class="directories">
+      <strong>Allowed directories:</strong>
+      <div class="dir-list">${allowedDirectories.join(", ") || "Configured by MCP client"}</div>
+    </div>
+
+    <form method="POST" action="/authorize" style="margin-top: 24px;">
+      <input type="hidden" name="client_id" value="${client_id}">
+      <input type="hidden" name="redirect_uri" value="${redirect_uri}">
+      <input type="hidden" name="state" value="${state || ""}">
+      <input type="hidden" name="code_challenge" value="${code_challenge}">
+      <input type="hidden" name="code_challenge_method" value="${code_challenge_method}">
+      <div class="buttons">
+        <button type="submit" name="action" value="deny" class="deny">Deny</button>
+        <button type="submit" name="action" value="allow" class="allow">Allow</button>
+      </div>
+    </form>
+  </div>
+</body>
+</html>`;
+
+  res.type("html").send(html);
+});
+
+// Handle authorization form submission
+app.post("/authorize", express.urlencoded({ extended: true }), (req: Request, res: Response) => {
+  const { client_id, redirect_uri, state, code_challenge, code_challenge_method, action } =
+    req.body;
+
+  // Build redirect URL
+  const redirectUrl = new URL(redirect_uri);
+
+  if (action !== "allow") {
+    // User denied access
+    redirectUrl.searchParams.set("error", "access_denied");
+    redirectUrl.searchParams.set("error_description", "User denied the authorization request");
+    if (state) redirectUrl.searchParams.set("state", state);
+    res.redirect(redirectUrl.toString());
+    return;
+  }
+
+  // User approved - generate authorization code
+  const code = randomBytes(32).toString("hex");
+
+  authorizationCodes.set(code, {
+    clientId: client_id,
+    redirectUri: redirect_uri,
+    codeChallenge: code_challenge,
+    codeChallengeMethod: code_challenge_method,
+    expiresAt: Date.now() + AUTH_CODE_EXPIRATION_MS,
+  });
+
+  logger.info(`Authorization code issued for client: ${client_id}`);
+
+  redirectUrl.searchParams.set("code", code);
+  if (state) redirectUrl.searchParams.set("state", state);
+
+  res.redirect(redirectUrl.toString());
+});
+
+// Token Endpoint - Supports authorization_code, refresh_token, and client_credentials
+app.post(
+  "/token",
+  express.json(),
+  express.urlencoded({ extended: true }),
+  (req: Request, res: Response) => {
+    const grantType = req.body.grant_type;
+    const clientId = req.body.client_id;
+    const clientSecret = req.body.client_secret;
+
+    // Handle authorization_code grant (OAuth 2.1 with PKCE)
+    if (grantType === "authorization_code") {
+      const code = req.body.code;
+      const codeVerifier = req.body.code_verifier;
+      const redirectUri = req.body.redirect_uri;
+
+      if (!code || !codeVerifier) {
+        res.status(400).json({
+          error: "invalid_request",
+          error_description: "Missing code or code_verifier",
+        });
+        return;
+      }
+
+      const authCode = authorizationCodes.get(code);
+      if (!authCode) {
+        res.status(400).json({
+          error: "invalid_grant",
+          error_description: "Invalid or expired authorization code",
+        });
+        return;
+      }
+
+      // Verify code hasn't expired
+      if (Date.now() > authCode.expiresAt) {
+        authorizationCodes.delete(code);
+        res.status(400).json({
+          error: "invalid_grant",
+          error_description: "Authorization code has expired",
+        });
+        return;
+      }
+
+      // Verify client_id matches
+      if (authCode.clientId !== clientId) {
+        res.status(400).json({
+          error: "invalid_grant",
+          error_description: "Client ID mismatch",
+        });
+        return;
+      }
+
+      // Verify redirect_uri matches
+      if (authCode.redirectUri !== redirectUri) {
+        res.status(400).json({
+          error: "invalid_grant",
+          error_description: "Redirect URI mismatch",
+        });
+        return;
+      }
+
+      // Verify PKCE code_verifier
+      if (
+        !verifyCodeChallenge(codeVerifier, authCode.codeChallenge, authCode.codeChallengeMethod)
+      ) {
+        res.status(400).json({
+          error: "invalid_grant",
+          error_description: "Invalid code_verifier",
+        });
+        return;
+      }
+
+      // Delete the used authorization code (one-time use)
+      authorizationCodes.delete(code);
+
+      // Generate tokens
+      const accessToken = generateAccessToken();
+      const refreshToken = generateRefreshToken();
+      const expiresIn = TOKEN_EXPIRATION_MS / 1000;
+
+      accessTokens.set(accessToken, {
+        expiresAt: Date.now() + TOKEN_EXPIRATION_MS,
+      });
+
+      refreshTokens.set(refreshToken, {
+        clientId,
+        expiresAt: Date.now() + REFRESH_TOKEN_EXPIRATION_MS,
+      });
+
+      logger.info(`Access token issued for client: ${clientId} (authorization_code)`);
+
+      res.json({
+        access_token: accessToken,
+        token_type: "Bearer",
+        expires_in: expiresIn,
+        refresh_token: refreshToken,
+      });
+      return;
+    }
+
+    // Handle refresh_token grant
+    if (grantType === "refresh_token") {
+      const refreshToken = req.body.refresh_token;
+
+      if (!refreshToken) {
+        res.status(400).json({
+          error: "invalid_request",
+          error_description: "Missing refresh_token",
+        });
+        return;
+      }
+
+      const storedRefresh = refreshTokens.get(refreshToken);
+      if (!storedRefresh) {
+        res.status(400).json({
+          error: "invalid_grant",
+          error_description: "Invalid refresh token",
+        });
+        return;
+      }
+
+      if (Date.now() > storedRefresh.expiresAt) {
+        refreshTokens.delete(refreshToken);
+        res.status(400).json({
+          error: "invalid_grant",
+          error_description: "Refresh token has expired",
+        });
+        return;
+      }
+
+      // Rotate refresh token (OAuth 2.1 requirement)
+      refreshTokens.delete(refreshToken);
+      const newRefreshToken = generateRefreshToken();
+      const accessToken = generateAccessToken();
+      const expiresIn = TOKEN_EXPIRATION_MS / 1000;
+
+      accessTokens.set(accessToken, {
+        expiresAt: Date.now() + TOKEN_EXPIRATION_MS,
+      });
+
+      refreshTokens.set(newRefreshToken, {
+        clientId: storedRefresh.clientId,
+        expiresAt: Date.now() + REFRESH_TOKEN_EXPIRATION_MS,
+      });
+
+      logger.info(`Access token refreshed for client: ${storedRefresh.clientId}`);
+
+      res.json({
+        access_token: accessToken,
+        token_type: "Bearer",
+        expires_in: expiresIn,
+        refresh_token: newRefreshToken,
+      });
+      return;
+    }
+
+    // Handle client_credentials grant (machine-to-machine)
+    if (grantType === "client_credentials") {
+      // Validate client credentials against static config or registered clients
+      const client = registeredClients.get(clientId);
+      const isValidStatic = clientId === CLIENT_ID && clientSecret === CLIENT_SECRET;
+      const isValidRegistered = client && client.clientSecret === clientSecret;
+
+      if (!isValidStatic && !isValidRegistered) {
+        res.status(401).json({
+          error: "invalid_client",
+          error_description: "Invalid client_id or client_secret.",
+        });
+        return;
+      }
+
+      const accessToken = generateAccessToken();
+      const expiresIn = TOKEN_EXPIRATION_MS / 1000;
+
+      accessTokens.set(accessToken, {
+        expiresAt: Date.now() + TOKEN_EXPIRATION_MS,
+      });
+
+      logger.info(`Access token issued for client: ${clientId} (client_credentials)`);
+
+      res.json({
+        access_token: accessToken,
+        token_type: "Bearer",
+        expires_in: expiresIn,
+      });
+      return;
+    }
+
+    res.status(400).json({
+      error: "unsupported_grant_type",
+      error_description:
+        "Supported grant types: authorization_code, refresh_token, client_credentials",
+    });
+  }
+);
 
 // Map sessionId to server transport for each client
 const transports: Map<string, StreamableHTTPServerTransport> = new Map();
 
 // Handle POST requests for client messages (protected)
 app.post("/mcp", authMiddleware, async (req: Request, res: Response) => {
-  console.log("Received MCP POST request");
+  logger.debug("Received MCP POST request");
   try {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
     let transport: StreamableHTTPServerTransport;
 
     if (sessionId && transports.has(sessionId)) {
-      transport = transports.get(sessionId)!;
+      const existingTransport = transports.get(sessionId);
+      if (!existingTransport) {
+        res.status(400).json({
+          jsonrpc: "2.0",
+          error: { code: -32000, message: "Session not found" },
+          id: req?.body?.id,
+        });
+        return;
+      }
+      transport = existingTransport;
     } else if (!sessionId) {
       const server = createServer();
 
@@ -1036,21 +1618,21 @@ app.post("/mcp", authMiddleware, async (req: Request, res: Response) => {
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         eventStore,
-        onsessioninitialized: (sessionId: string) => {
-          console.log(`Session initialized with ID: ${sessionId}`);
-          transports.set(sessionId, transport);
+        onsessioninitialized: (sid: string) => {
+          logger.debug(`Session initialized with ID: ${sid}`);
+          transports.set(sid, transport);
         },
       });
 
       server.server.onclose = async () => {
         const sid = transport.sessionId;
         if (sid && transports.has(sid)) {
-          console.log(`Transport closed for session ${sid}, removing from transports map`);
+          logger.debug(`Transport closed for session ${sid}, removing from transports map`);
           transports.delete(sid);
         }
       };
 
-      await server.connect(transport);
+      await server.connect(transport as Parameters<typeof server.connect>[0]);
       await transport.handleRequest(req, res);
       return;
     } else {
@@ -1066,8 +1648,8 @@ app.post("/mcp", authMiddleware, async (req: Request, res: Response) => {
     }
 
     await transport.handleRequest(req, res);
-  } catch (error) {
-    console.log("Error handling MCP request:", error);
+  } catch (err) {
+    logger.error("Error handling MCP request", err);
     if (!res.headersSent) {
       res.status(500).json({
         jsonrpc: "2.0",
@@ -1083,7 +1665,7 @@ app.post("/mcp", authMiddleware, async (req: Request, res: Response) => {
 
 // Handle GET requests for SSE streams (protected)
 app.get("/mcp", authMiddleware, async (req: Request, res: Response) => {
-  console.log("Received MCP GET request");
+  logger.debug("Received MCP GET request");
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
   if (!sessionId || !transports.has(sessionId)) {
     res.status(400).json({
@@ -1097,15 +1679,16 @@ app.get("/mcp", authMiddleware, async (req: Request, res: Response) => {
     return;
   }
 
-  const lastEventId = req.headers["last-event-id"] as string | undefined;
-  if (lastEventId) {
-    console.log(`Client reconnecting with Last-Event-ID: ${lastEventId}`);
-  } else {
-    console.log(`Establishing new SSE stream for session ${sessionId}`);
-  }
-
   const transport = transports.get(sessionId);
-  await transport!.handleRequest(req, res);
+  if (!transport) {
+    res.status(400).json({
+      jsonrpc: "2.0",
+      error: { code: -32000, message: "Session not found" },
+      id: req?.body?.id,
+    });
+    return;
+  }
+  await transport.handleRequest(req, res);
 });
 
 // Handle DELETE requests for session termination (protected)
@@ -1123,13 +1706,22 @@ app.delete("/mcp", authMiddleware, async (req: Request, res: Response) => {
     return;
   }
 
-  console.log(`Received session termination request for session ${sessionId}`);
+  logger.debug(`Session termination request for session ${sessionId}`);
+
+  const transport = transports.get(sessionId);
+  if (!transport) {
+    res.status(400).json({
+      jsonrpc: "2.0",
+      error: { code: -32000, message: "Session not found" },
+      id: req?.body?.id,
+    });
+    return;
+  }
 
   try {
-    const transport = transports.get(sessionId);
-    await transport!.handleRequest(req, res);
-  } catch (error) {
-    console.log("Error handling session termination:", error);
+    await transport.handleRequest(req, res);
+  } catch (err) {
+    logger.error("Error handling session termination", err);
     if (!res.headersSent) {
       res.status(500).json({
         jsonrpc: "2.0",
@@ -1146,11 +1738,13 @@ app.delete("/mcp", authMiddleware, async (req: Request, res: Response) => {
 // Start the server
 const PORT = process.env.PORT || 24024;
 const httpServer = app.listen(PORT, () => {
-  console.error(`MCP Filesystem Server (HTTP Streaming) listening on port ${PORT}`);
+  logger.info(`MCP Filesystem Server (HTTP Streaming) listening on port ${PORT}`);
   if (allowedDirectories.length === 0) {
-    console.error("Started without allowed directories - waiting for client to provide roots via MCP protocol");
+    logger.info(
+      "Started without allowed directories - waiting for client to provide roots via MCP protocol"
+    );
   } else {
-    console.error(`Allowed directories: ${allowedDirectories.join(", ")}`);
+    logger.info(`Allowed directories: ${allowedDirectories.join(", ")}`);
   }
 });
 
@@ -1161,29 +1755,29 @@ httpServer.on("error", (err: unknown) => {
       ? (err as { code?: unknown }).code
       : undefined;
   if (code === "EADDRINUSE") {
-    console.error(`Failed to start: Port ${PORT} is already in use.`);
+    logger.error(`Failed to start: Port ${PORT} is already in use.`);
   } else {
-    console.error("HTTP server encountered an error:", err);
+    logger.error("HTTP server encountered an error", err);
   }
   process.exit(1);
 });
 
 // Handle server shutdown
 process.on("SIGINT", async () => {
-  console.log("Shutting down server...");
+  logger.info("Shutting down server...");
 
   for (const [sessionId, transport] of transports) {
     try {
-      console.log(`Closing transport for session ${sessionId}`);
+      logger.debug(`Closing transport for session ${sessionId}`);
       await transport.close();
       transports.delete(sessionId);
-    } catch (error) {
-      console.log(`Error closing transport for session ${sessionId}:`, error);
+    } catch (err) {
+      logger.error(`Error closing transport for session ${sessionId}`, err);
     }
   }
 
   httpServer.close(() => {
-    console.log("Server shutdown complete");
+    logger.info("Server shutdown complete");
     process.exit(0);
   });
 });
